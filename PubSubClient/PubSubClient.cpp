@@ -28,23 +28,24 @@ int PubSubClient::connect(char *id, char* willTopic, uint8_t willQos, uint8_t wi
              packet_len += strlen(willTopic) + 2 + strlen(willMessage) + 2;
          }
          
-         _client.write(MQTTCONNECT);
+         _client.addData(MQTTCONNECT);
          writeRemainingLength(packet_len);
-         _client.write(d, sizeof(d));
+         _client.addData(d, sizeof(d));
          if (willTopic) {
-             _client.write(0x06|(willQos<<3)|(willRetain<<5));
+             _client.addData(0x06|(willQos<<3)|(willRetain<<5));
          } else {
-             _client.write(0x02);
+             _client.addData(0x02);
          }
 
          // FIXME - should do proper 16bit write
-         _client.write((uint8_t)0);
-         _client.write(KEEPALIVE/1000);
+         _client.addData((uint8_t)0);
+         _client.addData(KEEPALIVE/1000);
          writeString(id, strlen(id));
          if (willTopic) {
              writeString(willTopic, strlen(willTopic));
              writeString(willMessage, strlen(willMessage));
          }
+         _client.finishSendPacket();
          lastOutActivity = millis();
          lastInActivity = millis();
          while (!_client.available()) {
@@ -98,6 +99,18 @@ uint16_t PubSubClient::readPacket() {
    return len;
 }
 
+inline void PubSubClient::sendPingRequest(void) {
+    _client.addData(MQTTPINGREQ);
+    _client.addData((uint8_t) 0);
+    _client.finishSendPacket();
+}
+
+inline void PubSubClient::sendPingResponse(void) {
+    _client.addData(MQTTPINGRESP);
+    _client.addData((uint8_t) 0);
+    _client.finishSendPacket();
+}
+
 int PubSubClient::loop() {
    if (connected()) {
       long t = millis();
@@ -106,8 +119,7 @@ int PubSubClient::loop() {
             _client.stop();
             return ERR_TIMEOUT_EXCEEDED;
          } else {
-            _client.write(MQTTPINGREQ);
-            _client.write((uint8_t)0);
+            sendPingRequest();
             lastOutActivity = t;
             lastInActivity = t;
             pingOutstanding = true;
@@ -131,8 +143,7 @@ int PubSubClient::loop() {
                   callback(topic,payload,len-4-tl);
                }
             } else if (type == MQTTPINGREQ) {
-               _client.write(MQTTPINGRESP);
-               _client.write((uint8_t)0);
+               sendPingResponse();
             } else if (type == MQTTPINGRESP) {
                pingOutstanding = false;
             }
@@ -157,13 +168,14 @@ int PubSubClient::publish(char* topic, uint8_t* payload, uint16_t plength, uint8
       if (retained != 0) {
          header |= 1;
       }
-      _client.write(header);
+      _client.addData(header);
       // topic needs to be preceeded by two bytes indicating the length of that string
       uint16_t topic_len = strlen(topic);
       writeRemainingLength(2 + topic_len + plength);      
       writeString(topic, topic_len);
       // now finally, payload, using original payload pointer!
-      _client.write(payload, plength);
+      _client.addData(payload, plength);
+      _client.finishSendPacket();
       return ERR_OK;
    }
    return ERR_NOT_CONNECTED;
@@ -172,21 +184,23 @@ int PubSubClient::publish(char* topic, uint8_t* payload, uint16_t plength, uint8
 int PubSubClient::subscribe(char* topic) {
    if (connected()) {
       nextMsgId++;
-      _client.write(MQTTSUBSCRIBE);
+      _client.addData(MQTTSUBSCRIBE);
       // 2 for msgid, 2 for utf8 encoding, 1 for qos flags
       writeRemainingLength(2 + strlen(topic) + 2 + 1);
-      _client.write(nextMsgId >> 8);
-      _client.write(nextMsgId & 0x00ff);
+      _client.addData(nextMsgId >> 8);
+      _client.addData(nextMsgId & 0x00ff);
       writeString(topic, strlen(topic));
-      _client.write((uint8_t)0);  // only do QoS 0 subs
+      _client.addData((uint8_t)0);  // only do QoS 0 subs
+      _client.finishSendPacket();
       return ERR_OK;
    }
    return ERR_NOT_CONNECTED;
 }
 
 void PubSubClient::disconnect() {
-   _client.write(MQTTDISCONNECT);
-   _client.write((uint8_t)0);
+   _client.addData(MQTTDISCONNECT);
+   _client.addData((uint8_t)0);
+   _client.finishSendPacket();
    _client.stop();
    lastInActivity = millis();
    lastOutActivity = millis();
@@ -194,9 +208,9 @@ void PubSubClient::disconnect() {
 
 int PubSubClient::writeString(char *string, uint16_t strlen) {
       // big endian string length first...
-      _client.write(strlen >> 8);
-      _client.write(strlen & 0x00ff);
-      _client.write((uint8_t *)string, strlen);
+      _client.addData(strlen >> 8);
+      _client.addData(strlen & 0x00ff);
+      _client.addData((uint8_t *)string, strlen);
       return 0;
 }
 
@@ -216,7 +230,7 @@ int PubSubClient::writeRemainingLength(uint16_t length) {
         if (len_tmp > 0) {
             digit = digit | 0x80;
         }
-        _client.write(digit);
+        _client.addData(digit);
     } while (len_tmp > 0);
     return 0;
 }

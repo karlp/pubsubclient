@@ -47,6 +47,8 @@ private:
    uint8_t readByte();
    int writeString(char *string, uint16_t str_len);
    int writeRemainingLength(uint16_t length);
+   void sendPingRequest(void);
+   void sendPingResponse(void);
 public:
    PubSubClient();
    PubSubClient(uint8_t *, uint16_t, void(*)(char*,uint8_t*,int));
